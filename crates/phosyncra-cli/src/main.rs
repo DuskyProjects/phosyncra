@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use phosyncra_analysis::{AnalysisCache, RecordingIdentity};
 use phosyncra_core::{PlaybackSnapshot, PlaybackTracker};
+use phosyncra_musicbrainz::MusicBrainzClient;
 use phosyncra_spotify::{
     CLIENT_ID_ENV, CallbackServer, PkceFlow, SpotifyClient, SpotifyDevice, clear_token, load_token,
     save_token, token_path,
@@ -178,7 +179,46 @@ async fn analysis_current() -> Result<()> {
         return Ok(());
     };
 
-    let identity = RecordingIdentity::from_track(&snapshot.track);
+    let mut identity = RecordingIdentity::from_track(&snapshot.track);
+    let spotify_id = identity.provider_ids.get("spotify").cloned();
+
+    if identity.isrc.is_none() {
+        if let Some(spotify_id) = spotify_id.as_deref() {
+            match spotify.track_isrc(spotify_id).await {
+                Ok(Some(isrc)) => {
+                    identity.set_isrc(isrc);
+                    println!("Identity: ISRC enriched from Spotify full-track metadata");
+                }
+                Ok(None) => {
+                    println!("Identity: Spotify full-track metadata has no ISRC");
+                }
+                Err(error) => {
+                    eprintln!("Spotify metadata enrichment failed: {error:#}");
+                }
+            }
+        }
+    }
+
+    let mut musicbrainz_match = None;
+    match MusicBrainzClient::new() {
+        Ok(mut musicbrainz) => match musicbrainz.resolve(&identity).await {
+            Ok(Some(matched)) => {
+                identity.set_musicbrainz_recording_id(matched.recording_id.clone());
+
+                if identity.isrc.is_none() {
+                    if let Some(isrc) = matched.isrcs.first() {
+                        identity.set_isrc(isrc);
+                    }
+                }
+
+                musicbrainz_match = Some(matched);
+            }
+            Ok(None) => println!("Identity: no confident MusicBrainz recording match"),
+            Err(error) => eprintln!("MusicBrainz enrichment failed: {error:#}"),
+        },
+        Err(error) => eprintln!("Could not initialize MusicBrainz client: {error:#}"),
+    }
+
     let cache = AnalysisCache::from_xdg()?;
     let path = cache.path_for(&identity);
 
@@ -189,8 +229,25 @@ async fn analysis_current() -> Result<()> {
         identity.isrc.as_deref().unwrap_or("<not available>")
     );
 
-    if let Some(spotify_id) = identity.provider_ids.get("spotify") {
+    if let Some(spotify_id) = spotify_id {
         println!("Spotify ID: {spotify_id}");
+    }
+
+    if let Some(recording_id) = &identity.musicbrainz_recording_id {
+        println!("MusicBrainz recording ID: {recording_id}");
+    }
+
+    if let Some(matched) = musicbrainz_match {
+        println!(
+            "MusicBrainz match: {} — {} | score={} | duration={} ms",
+            matched.artist_credit,
+            matched.title,
+            matched.score,
+            matched
+                .length_ms
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        );
     }
 
     println!("Cache key: {}", AnalysisCache::cache_key(&identity));
