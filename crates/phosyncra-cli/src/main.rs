@@ -148,12 +148,7 @@ async fn spotify_devices() -> Result<()> {
 
         println!(
             "{marker} {} | type={} | active={} | restricted={} | volume={} | id={}",
-            device.name,
-            device.device_type,
-            device.is_active,
-            device.is_restricted,
-            volume,
-            id
+            device.name, device.device_type, device.is_active, device.is_restricted, volume, id
         );
     }
 
