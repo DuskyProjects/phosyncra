@@ -1,5 +1,5 @@
 use crate::{
-    models::{PlaybackResponse, SpotifyPlayback},
+    models::{PlaybackResponse, SpotifyDevice, SpotifyPlayback},
     save_token,
     storage::{TokenSet, load_token},
 };
@@ -15,6 +15,7 @@ use std::{
 use tokio::sync::Mutex;
 
 const PLAYER_URL: &str = "https://api.spotify.com/v1/me/player";
+const DEVICES_URL: &str = "https://api.spotify.com/v1/me/player/devices";
 const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
 
 pub struct SpotifyClient {
@@ -97,6 +98,56 @@ impl SpotifyClient {
             .context("Spotify returned an invalid playback response")?;
 
         Ok(playback.into_playback())
+    }
+
+    pub async fn devices(&mut self) -> Result<Vec<SpotifyDevice>> {
+        #[derive(Debug, Deserialize)]
+        struct DevicesResponse {
+            devices: Vec<SpotifyDevice>,
+        }
+
+        self.ensure_fresh_token().await?;
+
+        let mut response = self
+            .http
+            .get(DEVICES_URL)
+            .bearer_auth(&self.token.access_token)
+            .send()
+            .await
+            .context("failed to query Spotify devices")?;
+
+        if response.status() == StatusCode::UNAUTHORIZED {
+            self.refresh().await?;
+            response = self
+                .http
+                .get(DEVICES_URL)
+                .bearer_auth(&self.token.access_token)
+                .send()
+                .await
+                .context("failed to retry Spotify devices query")?;
+        }
+
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("unknown");
+            bail!("Spotify rate limit reached; retry after {retry_after} seconds");
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            bail!("Spotify devices request failed with {status}: {body}");
+        }
+
+        let devices: DevicesResponse = response
+            .json()
+            .await
+            .context("Spotify returned an invalid devices response")?;
+
+        Ok(devices.devices)
     }
 
     pub async fn ensure_fresh_token(&mut self) -> Result<()> {
