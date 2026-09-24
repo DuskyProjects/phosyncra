@@ -1,5 +1,15 @@
 //! Core domain types and provider/backend contracts for Phosyncra.
 
+mod clock;
+mod effect;
+mod scheduler;
+mod timeline;
+
+pub use clock::{ClockCorrection, PlaybackClock};
+pub use effect::{Effect, PulseEffect};
+pub use scheduler::TimelineScheduler;
+pub use timeline::{BeatTimeline, TimelineError};
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -28,14 +38,14 @@ pub struct LightState {
     pub transition: Duration,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TimelineEvent {
     pub at: Duration,
     pub kind: TimelineEventKind,
     pub strength_milli: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TimelineEventKind {
     Beat,
     Downbeat,
