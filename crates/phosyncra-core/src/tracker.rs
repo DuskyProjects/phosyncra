@@ -87,9 +87,7 @@ impl PlaybackTracker {
         // Re-anchoring for that harmless jitter moves the scheduler phase and
         // can collapse a 75 ms lighting lead window. Keep the monotonic clock
         // stable until the provider disagrees by a meaningful amount.
-        if snapshot.playing
-            && snapshot.position.abs_diff(predicted) <= CORRECTION_DEADBAND
-        {
+        if snapshot.playing && snapshot.position.abs_diff(predicted) <= CORRECTION_DEADBAND {
             return PlaybackUpdate::StaleSample;
         }
 
