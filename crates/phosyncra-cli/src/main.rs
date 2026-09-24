@@ -1,11 +1,12 @@
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use phosyncra_acousticbrainz::AcousticBrainzClient;
 use phosyncra_analysis::{AnalysisCache, RecordingIdentity};
 use phosyncra_core::{
     BeatTimeline, Effect, PlaybackSnapshot, PlaybackTracker, PulseEffect, TimelineScheduler,
     TrackIdentity,
 };
+use phosyncra_matter::{ChipTool, MatterTarget};
 use phosyncra_musicbrainz::{MusicBrainzClient, MusicBrainzMatch};
 use phosyncra_spotify::{
     CLIENT_ID_ENV, CallbackServer, PkceFlow, SpotifyClient, SpotifyDevice, clear_token, load_token,
@@ -14,6 +15,7 @@ use phosyncra_spotify::{
 use reqwest::Client;
 use std::{
     env,
+    path::PathBuf,
     process::Command,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -43,6 +45,10 @@ enum Commands {
         #[command(subcommand)]
         command: SyncCommands,
     },
+    Matter {
+        #[command(subcommand)]
+        command: MatterCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -63,6 +69,63 @@ enum SyncCommands {
         /// Spotify playback-state polling interval.
         #[arg(long, default_value_t = 2000)]
         poll_ms: u64,
+    },
+}
+
+#[derive(Args, Clone)]
+struct ChipToolArgs {
+    /// Path to the official Matter chip-tool binary.
+    #[arg(long, default_value = "chip-tool")]
+    chip_tool: PathBuf,
+    /// Optional CHIP Tool commissioner/fabric name, e.g. alpha or beta.
+    #[arg(long)]
+    commissioner_name: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum MatterCommands {
+    /// Verify that the official Matter chip-tool can be launched.
+    Doctor {
+        #[command(flatten)]
+        tool: ChipToolArgs,
+    },
+    /// Discover Matter devices currently advertising as commissionable.
+    Discover {
+        #[command(flatten)]
+        tool: ChipToolArgs,
+    },
+    /// Commission a device using a Matter QR/manual setup payload.
+    Commission {
+        node_id: String,
+        setup_code: String,
+        #[command(flatten)]
+        tool: ChipToolArgs,
+    },
+    /// Turn a commissioned Matter light on.
+    On {
+        target: MatterTarget,
+        #[command(flatten)]
+        tool: ChipToolArgs,
+    },
+    /// Turn a commissioned Matter light off.
+    Off {
+        target: MatterTarget,
+        #[command(flatten)]
+        tool: ChipToolArgs,
+    },
+    /// Set brightness, hue, and saturation on a commissioned Matter light.
+    Set {
+        target: MatterTarget,
+        #[arg(long)]
+        brightness: f32,
+        #[arg(long)]
+        hue: f32,
+        #[arg(long, default_value_t = 1.0)]
+        saturation: f32,
+        #[arg(long, default_value_t = 0)]
+        transition_ms: u64,
+        #[command(flatten)]
+        tool: ChipToolArgs,
     },
 }
 
@@ -108,6 +171,92 @@ async fn main() -> Result<()> {
                 poll_ms,
             } => sync_virtual(latency_ms, poll_ms).await,
         },
+        Commands::Matter { command } => matter_command(command).await,
+    }
+}
+
+async fn matter_command(command: MatterCommands) -> Result<()> {
+    match command {
+        MatterCommands::Doctor { tool } => {
+            let chip = chip_tool_from_args(tool);
+            let output = chip.doctor().await?;
+            println!("chip-tool launch: OK");
+            println!("Binary: {}", chip.binary().display());
+            println!("Exit status: {}", output.status);
+            let detail = output.combined();
+            if !detail.is_empty() {
+                println!("{detail}");
+            }
+        }
+        MatterCommands::Discover { tool } => {
+            let chip = chip_tool_from_args(tool);
+            let output = chip.discover_commissionables().await?;
+            println!("{}", output.combined());
+        }
+        MatterCommands::Commission {
+            node_id,
+            setup_code,
+            tool,
+        } => {
+            let chip = chip_tool_from_args(tool);
+            let output = chip.commission_code(&node_id, &setup_code).await?;
+            println!("{}", output.combined());
+        }
+        MatterCommands::On { target, tool } => {
+            let chip = chip_tool_from_args(tool);
+            let output = chip.on(&target).await?;
+            println!("{}", output.combined());
+        }
+        MatterCommands::Off { target, tool } => {
+            let chip = chip_tool_from_args(tool);
+            let output = chip.off(&target).await?;
+            println!("{}", output.combined());
+        }
+        MatterCommands::Set {
+            target,
+            brightness,
+            hue,
+            saturation,
+            transition_ms,
+            tool,
+        } => {
+            if !(0.0..=1.0).contains(&brightness) {
+                bail!("--brightness must be between 0.0 and 1.0");
+            }
+            if !(0.0..=1.0).contains(&saturation) {
+                bail!("--saturation must be between 0.0 and 1.0");
+            }
+
+            let chip = chip_tool_from_args(tool);
+            let outputs = chip
+                .apply_light_state(
+                    &target,
+                    phosyncra_core::LightState {
+                        brightness,
+                        hue_degrees: hue,
+                        saturation,
+                        transition: Duration::from_millis(transition_ms),
+                    },
+                )
+                .await?;
+
+            for output in outputs {
+                let detail = output.combined();
+                if !detail.is_empty() {
+                    println!("{detail}");
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn chip_tool_from_args(args: ChipToolArgs) -> ChipTool {
+    let chip = ChipTool::new(args.chip_tool);
+    match args.commissioner_name {
+        Some(name) => chip.with_commissioner_name(name),
+        None => chip,
     }
 }
 
