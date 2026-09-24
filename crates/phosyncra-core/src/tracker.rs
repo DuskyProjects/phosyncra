@@ -2,6 +2,7 @@ use crate::{ClockCorrection, PlaybackClock, PlaybackSnapshot, TrackIdentity};
 use std::time::{Duration, Instant};
 
 const STALE_LAG_TOLERANCE: Duration = Duration::from_millis(750);
+const CORRECTION_DEADBAND: Duration = Duration::from_millis(100);
 
 /// Maintains a smooth local playback position from intermittent provider samples.
 ///
@@ -57,7 +58,14 @@ impl PlaybackTracker {
             return PlaybackUpdate::StaleSample;
         }
 
+        let previous_provider_position = self.last_provider_position;
         let predicted = self.clock.position_at(now);
+
+        // Remember every distinct provider observation, even when we decide not
+        // to re-anchor to it. This keeps seek detection relative to the latest
+        // provider sample instead of an old accepted correction.
+        self.last_provider_position = snapshot.position;
+        self.last_provider_playing = snapshot.playing;
 
         // While playing, Spotify can occasionally return a position that has
         // advanced only a little since the previous accepted sample even though
@@ -69,15 +77,21 @@ impl PlaybackTracker {
         // previous provider position. Forward seeks are also accepted because
         // they land ahead of the predicted local clock.
         if snapshot.playing
-            && snapshot.position >= self.last_provider_position
+            && snapshot.position >= previous_provider_position
             && snapshot.position.saturating_add(STALE_LAG_TOLERANCE) < predicted
         {
             return PlaybackUpdate::StaleSample;
         }
 
+        // Spotify progress samples can wander by a few tens of milliseconds.
+        // Re-anchoring for that harmless jitter moves the scheduler phase and
+        // can collapse a 75 ms lighting lead window. Keep the monotonic clock
+        // stable until the provider disagrees by a meaningful amount.
+        if snapshot.playing && snapshot.position.abs_diff(predicted) <= CORRECTION_DEADBAND {
+            return PlaybackUpdate::StaleSample;
+        }
+
         let correction = self.clock.resync(snapshot, now);
-        self.last_provider_position = snapshot.position;
-        self.last_provider_playing = snapshot.playing;
         PlaybackUpdate::Corrected(correction)
     }
 
@@ -137,6 +151,42 @@ mod tests {
         assert_eq!(
             tracker.snapshot_at(t1).position,
             Duration::from_millis(232_074)
+        );
+    }
+
+    #[test]
+    fn small_provider_jitter_does_not_reanchor_clock() {
+        let t0 = Instant::now();
+        let mut tracker = PlaybackTracker::new(&snapshot("Track A", 10_000, true), t0);
+
+        let t1 = t0 + Duration::from_secs(2);
+        let update = tracker.ingest(&snapshot("Track A", 12_080, true), t1);
+
+        assert_eq!(update, PlaybackUpdate::StaleSample);
+        assert_eq!(
+            tracker.snapshot_at(t1).position,
+            Duration::from_millis(12_000)
+        );
+    }
+
+    #[test]
+    fn ignored_jitter_still_updates_latest_provider_position_for_seek_detection() {
+        let t0 = Instant::now();
+        let mut tracker = PlaybackTracker::new(&snapshot("Track A", 10_000, true), t0);
+
+        let t1 = t0 + Duration::from_secs(2);
+        assert_eq!(
+            tracker.ingest(&snapshot("Track A", 12_080, true), t1),
+            PlaybackUpdate::StaleSample
+        );
+
+        let t2 = t0 + Duration::from_secs(4);
+        let update = tracker.ingest(&snapshot("Track A", 5_000, true), t2);
+
+        assert!(matches!(update, PlaybackUpdate::Corrected(_)));
+        assert_eq!(
+            tracker.snapshot_at(t2).position,
+            Duration::from_millis(5_000)
         );
     }
 
