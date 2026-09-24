@@ -2,8 +2,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use phosyncra_core::{PlaybackSnapshot, PlaybackTracker};
 use phosyncra_spotify::{
-    CLIENT_ID_ENV, CallbackServer, PkceFlow, SpotifyClient, SpotifyDevice,
-    clear_token, load_token, save_token, token_path,
+    CLIENT_ID_ENV, CallbackServer, PkceFlow, SpotifyClient, SpotifyDevice, clear_token, load_token,
+    save_token, token_path,
 };
 use reqwest::Client;
 use std::{
