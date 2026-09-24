@@ -24,6 +24,7 @@ Phosyncra is being designed as a headless-first synchronization platform with an
 - `phosyncra-spotify` — Spotify PKCE authentication, token management, and playback provider
 - `phosyncra-cli` — the `phosyncra` command-line client
 - `phosyncra-analysis` — normalized beat/section documents and persistent analysis cache
+- `phosyncra-matter` — Matter commissioning/control diagnostics through the official CHIP Tool
 - additional provider/backend/GUI crates will be added behind stable interfaces
 
 ## Spotify setup
@@ -69,6 +70,37 @@ cargo run -p phosyncra-cli -- analysis current
 Analysis documents are stored under `$XDG_CACHE_HOME/phosyncra/analysis/`, or `~/.cache/phosyncra/analysis/` when `XDG_CACHE_HOME` is unset. Cache keys prefer ISRC, then MusicBrainz recording ID, then Spotify ID, with metadata as a final fallback.
 
 OAuth tokens are stored under `$XDG_STATE_HOME/phosyncra/spotify-token.json`, or `~/.local/state/phosyncra/spotify-token.json` when `XDG_STATE_HOME` is unset. On Unix the directory is restricted to mode 0700 and the token file to mode 0600.
+
+## Matter diagnostics
+
+Phosyncra uses the official Matter `chip-tool` for commissioning, discovery, and manual device validation while the persistent/native controller backend is developed. The subprocess-based diagnostic path is intentionally not used for beat-synchronized output.
+
+Verify that `chip-tool` is available:
+
+```sh
+cargo run -p phosyncra-cli -- matter doctor
+```
+
+Discover commissionable Matter devices:
+
+```sh
+cargo run -p phosyncra-cli -- matter discover
+```
+
+Commission a device using a QR/manual setup payload:
+
+```sh
+cargo run -p phosyncra-cli -- matter commission 1 '<setup-code>'
+```
+
+Targets use `NODE_ID:ENDPOINT`, for example `1:1` or `0x1234:1`.
+
+```sh
+cargo run -p phosyncra-cli -- matter on 1:1
+cargo run -p phosyncra-cli -- matter set 1:1 --brightness 0.8 --hue 220 --saturation 1.0 --transition-ms 100
+```
+
+For devices already commissioned to another ecosystem, open a Matter multi-admin commissioning window in that ecosystem first, then commission the generated setup payload into Phosyncra's CHIP Tool fabric.
 
 ## Current timing prototype
 

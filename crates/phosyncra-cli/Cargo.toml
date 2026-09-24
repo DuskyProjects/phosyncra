@@ -14,6 +14,7 @@ clap.workspace = true
 phosyncra-acousticbrainz = { path = "../phosyncra-acousticbrainz" }
 phosyncra-analysis = { path = "../phosyncra-analysis" }
 phosyncra-core = { path = "../phosyncra-core" }
+phosyncra-matter = { path = "../phosyncra-matter" }
 phosyncra-musicbrainz = { path = "../phosyncra-musicbrainz" }
 phosyncra-spotify = { path = "../phosyncra-spotify" }
 reqwest.workspace = true
