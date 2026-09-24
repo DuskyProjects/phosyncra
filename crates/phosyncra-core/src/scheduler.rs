@@ -90,13 +90,15 @@ mod tests {
             1
         );
 
-        assert!(scheduler
-            .due_events(
-                &timeline,
-                Duration::from_millis(424),
-                Duration::from_millis(75)
-            )
-            .is_empty());
+        assert!(
+            scheduler
+                .due_events(
+                    &timeline,
+                    Duration::from_millis(424),
+                    Duration::from_millis(75)
+                )
+                .is_empty()
+        );
 
         let due = scheduler.due_events(
             &timeline,
@@ -128,11 +130,7 @@ mod tests {
         let mut scheduler = TimelineScheduler::new(Duration::from_secs(1));
 
         scheduler.due_events(&timeline, Duration::from_secs(8), Duration::ZERO);
-        let due = scheduler.due_events(
-            &timeline,
-            Duration::from_secs(2),
-            Duration::ZERO,
-        );
+        let due = scheduler.due_events(&timeline, Duration::from_secs(2), Duration::ZERO);
 
         assert_eq!(due.len(), 1);
         assert_eq!(due[0].at, Duration::from_secs(2));
