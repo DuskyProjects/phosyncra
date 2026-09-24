@@ -7,6 +7,7 @@ members = [
     "crates/phosyncra-cli",
     "crates/phosyncra-analysis",
     "crates/phosyncra-musicbrainz",
+    "crates/phosyncra-acousticbrainz",
 ]
 
 [workspace.package]
