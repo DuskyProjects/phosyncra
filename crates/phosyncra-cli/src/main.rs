@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use phosyncra_analysis::{AnalysisCache, RecordingIdentity};
 use phosyncra_core::{PlaybackSnapshot, PlaybackTracker};
 use phosyncra_spotify::{
     CLIENT_ID_ENV, CallbackServer, PkceFlow, SpotifyClient, SpotifyDevice, clear_token, load_token,
@@ -29,6 +30,16 @@ enum Commands {
         #[command(subcommand)]
         command: SpotifyCommands,
     },
+    Analysis {
+        #[command(subcommand)]
+        command: AnalysisCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum AnalysisCommands {
+    /// Show the analysis-cache identity and cache status for the current Spotify track.
+    Current,
 }
 
 #[derive(Subcommand)]
@@ -62,6 +73,9 @@ async fn main() -> Result<()> {
             SpotifyCommands::Devices => spotify_devices().await,
             SpotifyCommands::Watch { interval_ms } => spotify_watch(interval_ms).await,
             SpotifyCommands::Logout => spotify_logout(),
+        },
+        Commands::Analysis { command } => match command {
+            AnalysisCommands::Current => analysis_current().await,
         },
     }
 }
@@ -150,6 +164,47 @@ async fn spotify_devices() -> Result<()> {
             "{marker} {} | type={} | active={} | restricted={} | volume={} | id={}",
             device.name, device.device_type, device.is_active, device.is_restricted, volume, id
         );
+    }
+
+    Ok(())
+}
+
+async fn analysis_current() -> Result<()> {
+    let client_id = spotify_client_id()?;
+    let mut spotify = SpotifyClient::from_saved(client_id)?;
+    let playback = spotify.playback().await?;
+    let Some(snapshot) = playback.snapshot else {
+        println!("Spotify: nothing playing");
+        return Ok(());
+    };
+
+    let identity = RecordingIdentity::from_track(&snapshot.track);
+    let cache = AnalysisCache::from_xdg()?;
+    let path = cache.path_for(&identity);
+
+    println!("Recording: {} — {}", identity.artist, identity.title);
+    println!("Duration: {} ms", identity.duration_ms);
+    println!(
+        "ISRC: {}",
+        identity.isrc.as_deref().unwrap_or("<not available>")
+    );
+
+    if let Some(spotify_id) = identity.provider_ids.get("spotify") {
+        println!("Spotify ID: {spotify_id}");
+    }
+
+    println!("Cache key: {}", AnalysisCache::cache_key(&identity));
+    println!("Cache file: {}", path.display());
+
+    match cache.load(&identity)? {
+        Some(analysis) => {
+            println!(
+                "Analysis: cached ({} beats, {} sections)",
+                analysis.beats.len(),
+                analysis.sections.len()
+            );
+        }
+        None => println!("Analysis: cache miss"),
     }
 
     Ok(())
