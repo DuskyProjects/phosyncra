@@ -39,6 +39,8 @@ enum SpotifyCommands {
     Status,
     /// Print the current Spotify track and active device.
     NowPlaying,
+    /// List Spotify Connect devices currently exposed by the Web API.
+    Devices,
     /// Continuously print playback state for integration testing.
     Watch {
         #[arg(long, default_value_t = 5000)]
@@ -57,6 +59,7 @@ async fn main() -> Result<()> {
             SpotifyCommands::Login => spotify_login().await,
             SpotifyCommands::Status => spotify_status(),
             SpotifyCommands::NowPlaying => spotify_now_playing().await,
+            SpotifyCommands::Devices => spotify_devices().await,
             SpotifyCommands::Watch { interval_ms } => spotify_watch(interval_ms).await,
             SpotifyCommands::Logout => spotify_logout(),
         },
@@ -121,6 +124,39 @@ async fn spotify_now_playing() -> Result<()> {
     let mut spotify = SpotifyClient::from_saved(client_id)?;
     let playback = spotify.playback().await?;
     print_playback(playback.snapshot.as_ref(), playback.device.as_ref());
+    Ok(())
+}
+
+async fn spotify_devices() -> Result<()> {
+    let client_id = spotify_client_id()?;
+    let mut spotify = SpotifyClient::from_saved(client_id)?;
+    let devices = spotify.devices().await?;
+
+    if devices.is_empty() {
+        println!("Spotify reports no available Connect devices.");
+        return Ok(());
+    }
+
+    println!("Spotify Connect devices:");
+    for device in devices {
+        let marker = if device.is_active { "*" } else { " " };
+        let volume = device
+            .volume_percent
+            .map(|value| format!("{value}%"))
+            .unwrap_or_else(|| "n/a".to_string());
+        let id = device.id.as_deref().unwrap_or("<none>");
+
+        println!(
+            "{marker} {} | type={} | active={} | restricted={} | volume={} | id={}",
+            device.name,
+            device.device_type,
+            device.is_active,
+            device.is_restricted,
+            volume,
+            id
+        );
+    }
+
     Ok(())
 }
 
