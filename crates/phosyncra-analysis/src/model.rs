@@ -36,6 +36,14 @@ impl RecordingIdentity {
             provider_ids,
         }
     }
+
+    pub fn set_isrc(&mut self, isrc: impl AsRef<str>) {
+        self.isrc = Some(normalize_isrc(isrc.as_ref()));
+    }
+
+    pub fn set_musicbrainz_recording_id(&mut self, recording_id: impl Into<String>) {
+        self.musicbrainz_recording_id = Some(recording_id.into());
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
