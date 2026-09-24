@@ -2,7 +2,10 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use phosyncra_acousticbrainz::AcousticBrainzClient;
 use phosyncra_analysis::{AnalysisCache, RecordingIdentity};
-use phosyncra_core::{PlaybackSnapshot, PlaybackTracker};
+use phosyncra_core::{
+    BeatTimeline, Effect, PlaybackSnapshot, PlaybackTracker, PulseEffect, TimelineScheduler,
+    TrackIdentity,
+};
 use phosyncra_musicbrainz::{MusicBrainzClient, MusicBrainzMatch};
 use phosyncra_spotify::{
     CLIENT_ID_ENV, CallbackServer, PkceFlow, SpotifyClient, SpotifyDevice, clear_token, load_token,
@@ -36,6 +39,10 @@ enum Commands {
         #[command(subcommand)]
         command: AnalysisCommands,
     },
+    Sync {
+        #[command(subcommand)]
+        command: SyncCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -44,6 +51,19 @@ enum AnalysisCommands {
     Current,
     /// Fetch beat timestamps for the current track from available external providers.
     Fetch,
+}
+
+#[derive(Subcommand)]
+enum SyncCommands {
+    /// Run the real Spotify clock and cached beat timeline against a virtual light.
+    Virtual {
+        /// Estimated end-to-end light latency; events are released this much early.
+        #[arg(long, default_value_t = 75)]
+        latency_ms: u64,
+        /// Spotify playback-state polling interval.
+        #[arg(long, default_value_t = 2000)]
+        poll_ms: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -81,6 +101,12 @@ async fn main() -> Result<()> {
         Commands::Analysis { command } => match command {
             AnalysisCommands::Current => analysis_current().await,
             AnalysisCommands::Fetch => analysis_fetch().await,
+        },
+        Commands::Sync { command } => match command {
+            SyncCommands::Virtual {
+                latency_ms,
+                poll_ms,
+            } => sync_virtual(latency_ms, poll_ms).await,
         },
     }
 }
@@ -188,6 +214,15 @@ async fn resolve_current_recording(
         return Ok(None);
     };
 
+    resolve_recording_from_snapshot(spotify, &snapshot)
+        .await
+        .map(Some)
+}
+
+async fn resolve_recording_from_snapshot(
+    spotify: &mut SpotifyClient,
+    snapshot: &PlaybackSnapshot,
+) -> Result<ResolvedRecording> {
     let mut identity = RecordingIdentity::from_track(&snapshot.track);
     let spotify_id = identity.provider_ids.get("spotify").cloned();
 
@@ -224,11 +259,11 @@ async fn resolve_current_recording(
         Err(error) => eprintln!("Could not initialize MusicBrainz client: {error:#}"),
     }
 
-    Ok(Some(ResolvedRecording {
+    Ok(ResolvedRecording {
         identity,
         spotify_id,
         musicbrainz_match,
-    }))
+    })
 }
 
 fn print_resolved_recording(resolved: &ResolvedRecording) {
@@ -347,6 +382,164 @@ async fn analysis_fetch() -> Result<()> {
     }
 
     Ok(())
+}
+
+struct VirtualSyncTrack {
+    track_key: String,
+    tracker: PlaybackTracker,
+    timeline: BeatTimeline,
+    scheduler: TimelineScheduler,
+}
+
+async fn build_virtual_sync_track(
+    spotify: &mut SpotifyClient,
+    cache: &AnalysisCache,
+    snapshot: &PlaybackSnapshot,
+) -> Result<Option<VirtualSyncTrack>> {
+    let resolved = resolve_recording_from_snapshot(spotify, snapshot).await?;
+    let Some(analysis) = cache.load(&resolved.identity)? else {
+        println!(
+            "Sync: no cached analysis for {} — {}",
+            resolved.identity.artist, resolved.identity.title
+        );
+        println!("Run: phosyncra analysis fetch");
+        return Ok(None);
+    };
+
+    let timeline = analysis.timeline();
+    println!(
+        "Sync track: {} — {} | {} cached events",
+        resolved.identity.artist,
+        resolved.identity.title,
+        timeline.len()
+    );
+
+    Ok(Some(VirtualSyncTrack {
+        track_key: track_key(&snapshot.track),
+        tracker: PlaybackTracker::new(snapshot, Instant::now()),
+        timeline,
+        scheduler: TimelineScheduler::default(),
+    }))
+}
+
+async fn sync_virtual(latency_ms: u64, poll_ms: u64) -> Result<()> {
+    if poll_ms < 1000 {
+        bail!("--poll-ms must be at least 1000");
+    }
+
+    let client_id = spotify_client_id()?;
+    let mut spotify = SpotifyClient::from_saved(client_id)?;
+    let cache = AnalysisCache::from_xdg()?;
+
+    let playback = spotify.playback().await?;
+    let Some(initial_snapshot) = playback.snapshot else {
+        bail!("Spotify reports no current playback");
+    };
+
+    let Some(mut current) =
+        build_virtual_sync_track(&mut spotify, &cache, &initial_snapshot).await?
+    else {
+        return Ok(());
+    };
+
+    let effect = PulseEffect::default();
+    let lead_time = Duration::from_millis(latency_ms);
+    let mut provider_poll = tokio::time::interval(Duration::from_millis(poll_ms));
+    provider_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    provider_poll.tick().await;
+
+    let mut scheduler_tick = tokio::time::interval(Duration::from_millis(10));
+    scheduler_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    println!(
+        "Live virtual sync active | device={} | latency={} ms | Spotify poll={} ms",
+        playback
+            .device
+            .as_ref()
+            .map(|device| device.name.as_str())
+            .unwrap_or("<unknown>"),
+        latency_ms,
+        poll_ms
+    );
+    println!("Press Ctrl+C to stop.");
+
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                println!("Live virtual sync stopped.");
+                break;
+            }
+            _ = provider_poll.tick() => {
+                match spotify.playback().await {
+                    Ok(playback) => {
+                        let Some(snapshot) = playback.snapshot else {
+                            continue;
+                        };
+
+                        let new_key = track_key(&snapshot.track);
+                        if new_key != current.track_key {
+                            println!(
+                                "Spotify track changed: {} — {}",
+                                snapshot.track.artist, snapshot.track.title
+                            );
+
+                            match build_virtual_sync_track(&mut spotify, &cache, &snapshot).await? {
+                                Some(next) => current = next,
+                                None => {
+                                    println!("Sync paused until a cached track is available.");
+                                    break;
+                                }
+                            }
+                        } else {
+                            current.tracker.ingest(&snapshot, Instant::now());
+                        }
+                    }
+                    Err(error) => eprintln!("Spotify sync poll failed: {error:#}"),
+                }
+            }
+            _ = scheduler_tick.tick() => {
+                let now = Instant::now();
+                let snapshot = current.tracker.snapshot_at(now);
+                if !snapshot.playing {
+                    continue;
+                }
+
+                let due = current
+                    .scheduler
+                    .due_events(&current.timeline, snapshot.position, lead_time);
+
+                for event in due {
+                    let light = effect.render(&event);
+                    let event_ms = event.at.as_millis();
+                    let playback_ms = snapshot.position.as_millis();
+                    let send_ahead_ms = event_ms.saturating_sub(playback_ms);
+
+                    println!(
+                        "PULSE {:?} | playback={} ms | event={} ms | send-ahead={} ms | brightness={:.2} | hue={:.1}°",
+                        event.kind,
+                        playback_ms,
+                        event_ms,
+                        send_ahead_ms,
+                        light.brightness,
+                        light.hue_degrees
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn track_key(track: &TrackIdentity) -> String {
+    track.provider_id.clone().unwrap_or_else(|| {
+        format!(
+            "{}\n{}\n{}",
+            track.artist.trim().to_lowercase(),
+            track.title.trim().to_lowercase(),
+            track.duration_ms
+        )
+    })
 }
 
 async fn spotify_watch(interval_ms: u64) -> Result<()> {
