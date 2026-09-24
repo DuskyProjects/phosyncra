@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::time::{Duration, Instant};
 
 const RECORDING_SEARCH_URL: &str = "https://musicbrainz.org/ws/2/recording/";
+const ISRC_LOOKUP_URL_PREFIX: &str = "https://musicbrainz.org/ws/2/isrc/";
 const MIN_REQUEST_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
@@ -43,20 +44,68 @@ impl MusicBrainzClient {
         &mut self,
         recording: &RecordingIdentity,
     ) -> Result<Option<MusicBrainzMatch>> {
+        if let Some(isrc) = recording.isrc.as_deref() {
+            if let Some(matched) = self.lookup_isrc(recording, isrc).await? {
+                return Ok(Some(matched));
+            }
+        }
+
+        self.search_metadata(recording).await
+    }
+
+    async fn lookup_isrc(
+        &mut self,
+        recording: &RecordingIdentity,
+        isrc: &str,
+    ) -> Result<Option<MusicBrainzMatch>> {
         self.wait_for_rate_limit().await;
 
-        let query = match &recording.isrc {
-            Some(isrc) => format!("isrc:{isrc}"),
-            None => {
-                let qdur = (recording.duration_ms + 1_000) / 2_000;
-                format!(
-                    "recording:{} AND artist:{} AND qdur:{}",
-                    quote_query(&recording.title),
-                    quote_query(&recording.artist),
-                    qdur
-                )
-            }
-        };
+        let url = format!("{ISRC_LOOKUP_URL_PREFIX}{isrc}");
+        let response = self
+            .http
+            .get(&url)
+            .query(&[("fmt", "json"), ("inc", "artist-credits+isrcs")])
+            .send()
+            .await
+            .context("failed to look up MusicBrainz ISRC")?;
+
+        self.last_request = Some(Instant::now());
+
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            bail!("MusicBrainz rate limit reached");
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            bail!("MusicBrainz ISRC lookup failed with {status}: {body}");
+        }
+
+        let body: IsrcLookupResponse = response
+            .json()
+            .await
+            .context("MusicBrainz returned an invalid ISRC lookup response")?;
+
+        Ok(select_isrc_match(recording, body.recordings))
+    }
+
+    async fn search_metadata(
+        &mut self,
+        recording: &RecordingIdentity,
+    ) -> Result<Option<MusicBrainzMatch>> {
+        self.wait_for_rate_limit().await;
+
+        let qdur = (recording.duration_ms + 1_000) / 2_000;
+        let query = format!(
+            "recording:{} AND artist:{} AND qdur:{}",
+            quote_query(&recording.title),
+            quote_query(&recording.artist),
+            qdur
+        );
 
         let response = self
             .http
@@ -64,7 +113,7 @@ impl MusicBrainzClient {
             .query(&[("query", query.as_str()), ("fmt", "json"), ("limit", "5")])
             .send()
             .await
-            .context("failed to query MusicBrainz")?;
+            .context("failed to search MusicBrainz recordings")?;
 
         self.last_request = Some(Instant::now());
 
@@ -75,7 +124,7 @@ impl MusicBrainzClient {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            bail!("MusicBrainz request failed with {status}: {body}");
+            bail!("MusicBrainz recording search failed with {status}: {body}");
         }
 
         let body: SearchResponse = response
@@ -83,7 +132,7 @@ impl MusicBrainzClient {
             .await
             .context("MusicBrainz returned an invalid recording search response")?;
 
-        Ok(select_match(recording, body.recordings))
+        Ok(select_search_match(recording, body.recordings))
     }
 
     async fn wait_for_rate_limit(&self) {
@@ -97,6 +146,12 @@ impl MusicBrainzClient {
 }
 
 #[derive(Debug, Deserialize)]
+struct IsrcLookupResponse {
+    #[serde(default)]
+    recordings: Vec<SearchRecording>,
+}
+
+#[derive(Debug, Deserialize)]
 struct SearchResponse {
     #[serde(default)]
     recordings: Vec<SearchRecording>,
@@ -105,6 +160,7 @@ struct SearchResponse {
 #[derive(Debug, Deserialize)]
 struct SearchRecording {
     id: String,
+    #[serde(default = "perfect_score")]
     score: u16,
     title: String,
     length: Option<u64>,
@@ -121,7 +177,24 @@ struct ArtistCredit {
     joinphrase: String,
 }
 
-fn select_match(
+fn select_isrc_match(
+    requested: &RecordingIdentity,
+    candidates: Vec<SearchRecording>,
+) -> Option<MusicBrainzMatch> {
+    let candidate = candidates.into_iter().min_by_key(|candidate| {
+        let title_mismatch = normalize_text(&candidate.title) != normalize_text(&requested.title);
+        let duration_diff = candidate
+            .length
+            .map(|length| length.abs_diff(requested.duration_ms))
+            .unwrap_or(u64::MAX);
+
+        (title_mismatch, duration_diff)
+    })?;
+
+    Some(to_match(candidate, 100))
+}
+
+fn select_search_match(
     requested: &RecordingIdentity,
     mut candidates: Vec<SearchRecording>,
 ) -> Option<MusicBrainzMatch> {
@@ -130,10 +203,6 @@ fn select_match(
     let candidate = candidates.into_iter().find(|candidate| {
         if candidate.score < 80 {
             return false;
-        }
-
-        if requested.isrc.is_some() {
-            return true;
         }
 
         let title_matches = normalize_text(&candidate.title) == normalize_text(&requested.title);
@@ -145,26 +214,36 @@ fn select_match(
         title_matches && duration_matches
     })?;
 
+    let score = candidate.score;
+    Some(to_match(candidate, score))
+}
+
+fn to_match(candidate: SearchRecording, score: u16) -> MusicBrainzMatch {
     let artist_credit = candidate
         .artist_credit
         .iter()
         .map(|credit| format!("{}{}", credit.name, credit.joinphrase))
         .collect::<String>();
 
-    Some(MusicBrainzMatch {
+    MusicBrainzMatch {
         recording_id: candidate.id,
         title: candidate.title,
         artist_credit,
         length_ms: candidate.length,
-        score: candidate.score,
+        score,
         isrcs: candidate.isrcs,
-    })
+    }
+}
+
+fn perfect_score() -> u16 {
+    100
 }
 
 fn quote_query(value: &str) -> String {
     let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{escaped}\"")
 }
+
 fn normalize_text(value: &str) -> String {
     value
         .chars()
@@ -189,33 +268,52 @@ mod tests {
         }
     }
 
+    fn candidate(id: &str, score: u16, title: &str, length: Option<u64>) -> SearchRecording {
+        SearchRecording {
+            id: id.into(),
+            score,
+            title: title.into(),
+            length,
+            artist_credit: vec![ArtistCredit {
+                name: "Artist".into(),
+                joinphrase: String::new(),
+            }],
+            isrcs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn direct_isrc_match_prefers_matching_title_then_duration() {
+        let requested = RecordingIdentity {
+            title: "We Swarm".into(),
+            artist: "The Glitch Mob".into(),
+            duration_ms: 354_320,
+            isrc: Some("USBMD1010009".into()),
+            musicbrainz_recording_id: None,
+            provider_ids: BTreeMap::new(),
+        };
+
+        let candidates = vec![
+            candidate("wrong-title", 100, "Other Track", Some(354_300)),
+            candidate("right", 100, "We Swarm", Some(354_400)),
+            candidate("right-farther", 100, "We Swarm", Some(360_000)),
+        ];
+
+        let matched = select_isrc_match(&requested, candidates).unwrap();
+        assert_eq!(matched.recording_id, "right");
+        assert_eq!(matched.score, 100);
+    }
+
     #[test]
     fn metadata_match_requires_title_and_reasonable_duration() {
         let candidates = vec![
-            SearchRecording {
-                id: "wrong".into(),
-                score: 100,
-                title: "Something Else".into(),
-                length: Some(287_000),
-                artist_credit: Vec::new(),
-                isrcs: Vec::new(),
-            },
-            SearchRecording {
-                id: "right".into(),
-                score: 95,
-                title: "One Click Headshot".into(),
-                length: Some(287_500),
-                artist_credit: vec![ArtistCredit {
-                    name: "Feed Me".into(),
-                    joinphrase: String::new(),
-                }],
-                isrcs: vec!["GBABC1234567".into()],
-            },
+            candidate("wrong", 100, "Something Else", Some(287_000)),
+            candidate("right", 95, "One Click Headshot", Some(287_500)),
         ];
 
-        let matched = select_match(&identity(), candidates).unwrap();
+        let matched = select_search_match(&identity(), candidates).unwrap();
         assert_eq!(matched.recording_id, "right");
-        assert_eq!(matched.artist_credit, "Feed Me");
+        assert_eq!(matched.artist_credit, "Artist");
     }
 
     #[test]
