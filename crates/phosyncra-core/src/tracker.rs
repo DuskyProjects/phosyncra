@@ -1,13 +1,15 @@
 use crate::{ClockCorrection, PlaybackClock, PlaybackSnapshot, TrackIdentity};
 use std::time::{Duration, Instant};
 
+const STALE_LAG_TOLERANCE: Duration = Duration::from_millis(750);
+
 /// Maintains a smooth local playback position from intermittent provider samples.
 ///
-/// Some providers may return the same `progress_ms` value repeatedly even while
-/// playback remains active. Re-anchoring to that repeated sample every poll would
-/// freeze Phosyncra's clock. This tracker ignores identical stale samples while
-/// still accepting real progress corrections, seeks, pauses, resumes, and track
-/// changes.
+/// Some providers may return the same `progress_ms` value repeatedly, or a
+/// slightly newer but still stale value, even while playback remains active.
+/// Re-anchoring to those samples would make Phosyncra's clock freeze or jump
+/// backward. This tracker keeps a monotonic local clock while still accepting
+/// genuine corrections, seeks, pauses, resumes, and track changes.
 #[derive(Debug, Clone)]
 pub struct PlaybackTracker {
     track: TrackIdentity,
@@ -52,6 +54,24 @@ impl PlaybackTracker {
         }
 
         if snapshot.position == self.last_provider_position {
+            return PlaybackUpdate::StaleSample;
+        }
+
+        let predicted = self.clock.position_at(now);
+
+        // While playing, Spotify can occasionally return a position that has
+        // advanced only a little since the previous accepted sample even though
+        // our monotonic clock has advanced much farther. If the provider sample
+        // still moved forward, but trails the predicted position by more than
+        // the tolerance, treat it as stale rather than snapping backward.
+        //
+        // A genuine backward seek is still accepted because it moves behind the
+        // previous provider position. Forward seeks are also accepted because
+        // they land ahead of the predicted local clock.
+        if snapshot.playing
+            && snapshot.position >= self.last_provider_position
+            && snapshot.position.saturating_add(STALE_LAG_TOLERANCE) < predicted
+        {
             return PlaybackUpdate::StaleSample;
         }
 
@@ -106,6 +126,21 @@ mod tests {
     }
 
     #[test]
+    fn slightly_newer_but_stale_sample_does_not_snap_clock_backward() {
+        let t0 = Instant::now();
+        let mut tracker = PlaybackTracker::new(&snapshot("Track A", 230_074, true), t0);
+
+        let t1 = t0 + Duration::from_secs(2);
+        let update = tracker.ingest(&snapshot("Track A", 230_170, true), t1);
+
+        assert_eq!(update, PlaybackUpdate::StaleSample);
+        assert_eq!(
+            tracker.snapshot_at(t1).position,
+            Duration::from_millis(232_074)
+        );
+    }
+
+    #[test]
     fn fresh_progress_sample_corrects_clock() {
         let t0 = Instant::now();
         let mut tracker = PlaybackTracker::new(&snapshot("Track A", 10_000, true), t0);
@@ -120,6 +155,36 @@ mod tests {
         assert_eq!(
             tracker.snapshot_at(t1).position,
             Duration::from_millis(12_250)
+        );
+    }
+
+    #[test]
+    fn genuine_backward_seek_is_accepted() {
+        let t0 = Instant::now();
+        let mut tracker = PlaybackTracker::new(&snapshot("Track A", 100_000, true), t0);
+
+        let t1 = t0 + Duration::from_secs(2);
+        let update = tracker.ingest(&snapshot("Track A", 40_000, true), t1);
+
+        assert!(matches!(update, PlaybackUpdate::Corrected(_)));
+        assert_eq!(
+            tracker.snapshot_at(t1).position,
+            Duration::from_millis(40_000)
+        );
+    }
+
+    #[test]
+    fn genuine_forward_seek_is_accepted() {
+        let t0 = Instant::now();
+        let mut tracker = PlaybackTracker::new(&snapshot("Track A", 10_000, true), t0);
+
+        let t1 = t0 + Duration::from_secs(2);
+        let update = tracker.ingest(&snapshot("Track A", 80_000, true), t1);
+
+        assert!(matches!(update, PlaybackUpdate::Corrected(_)));
+        assert_eq!(
+            tracker.snapshot_at(t1).position,
+            Duration::from_millis(80_000)
         );
     }
 
