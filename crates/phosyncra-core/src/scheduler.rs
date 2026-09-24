@@ -26,10 +26,7 @@ impl TimelineScheduler {
         Self::with_tolerances(seek_threshold, Duration::from_millis(25))
     }
 
-    pub fn with_tolerances(
-        seek_threshold: Duration,
-        max_release_lateness: Duration,
-    ) -> Self {
+    pub fn with_tolerances(seek_threshold: Duration, max_release_lateness: Duration) -> Self {
         Self {
             cursor: 0,
             last_position: None,
@@ -160,10 +157,8 @@ mod tests {
     #[test]
     fn small_scheduler_lateness_is_tolerated() {
         let timeline = BeatTimeline::from_bpm(Duration::from_secs(2), 120.0).unwrap();
-        let mut scheduler = TimelineScheduler::with_tolerances(
-            Duration::from_secs(2),
-            Duration::from_millis(25),
-        );
+        let mut scheduler =
+            TimelineScheduler::with_tolerances(Duration::from_secs(2), Duration::from_millis(25));
 
         scheduler.due_events(&timeline, Duration::ZERO, Duration::ZERO);
 
