@@ -14,7 +14,7 @@ use phosyncra_spotify::{
 };
 use reqwest::Client;
 use std::{
-    env,
+    env, fs,
     path::PathBuf,
     process::Command,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -80,6 +80,9 @@ struct ChipToolArgs {
     /// Optional CHIP Tool commissioner/fabric name, e.g. alpha or beta.
     #[arg(long)]
     commissioner_name: Option<String>,
+    /// Persistent CHIP Tool state directory. Defaults to Phosyncra's XDG state directory.
+    #[arg(long)]
+    storage_directory: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -178,10 +181,13 @@ async fn main() -> Result<()> {
 async fn matter_command(command: MatterCommands) -> Result<()> {
     match command {
         MatterCommands::Doctor { tool } => {
-            let chip = chip_tool_from_args(tool);
+            let chip = chip_tool_from_args(tool)?;
             let output = chip.doctor().await?;
             println!("chip-tool launch: OK");
             println!("Binary: {}", chip.binary().display());
+            if let Some(storage) = chip.storage_directory() {
+                println!("State directory: {}", storage.display());
+            }
             println!("Exit status: {}", output.status);
             let detail = output.combined();
             if !detail.is_empty() {
@@ -189,26 +195,39 @@ async fn matter_command(command: MatterCommands) -> Result<()> {
             }
         }
         MatterCommands::Discover { tool } => {
-            let chip = chip_tool_from_args(tool);
+            let chip = chip_tool_from_args(tool)?;
             let output = chip.discover_commissionables().await?;
-            println!("{}", output.combined());
+
+            if output.is_timeout() {
+                println!("Matter discovery: no commissionable devices found before timeout.");
+                println!(
+                    "Put a device into Matter commissioning mode or open a multi-admin commissioning window, then run this command again."
+                );
+            } else {
+                let detail = output.combined();
+                if detail.is_empty() {
+                    println!("Matter discovery completed.");
+                } else {
+                    println!("{detail}");
+                }
+            }
         }
         MatterCommands::Commission {
             node_id,
             setup_code,
             tool,
         } => {
-            let chip = chip_tool_from_args(tool);
+            let chip = chip_tool_from_args(tool)?;
             let output = chip.commission_code(&node_id, &setup_code).await?;
             println!("{}", output.combined());
         }
         MatterCommands::On { target, tool } => {
-            let chip = chip_tool_from_args(tool);
+            let chip = chip_tool_from_args(tool)?;
             let output = chip.on(&target).await?;
             println!("{}", output.combined());
         }
         MatterCommands::Off { target, tool } => {
-            let chip = chip_tool_from_args(tool);
+            let chip = chip_tool_from_args(tool)?;
             let output = chip.off(&target).await?;
             println!("{}", output.combined());
         }
@@ -227,7 +246,7 @@ async fn matter_command(command: MatterCommands) -> Result<()> {
                 bail!("--saturation must be between 0.0 and 1.0");
             }
 
-            let chip = chip_tool_from_args(tool);
+            let chip = chip_tool_from_args(tool)?;
             let outputs = chip
                 .apply_light_state(
                     &target,
@@ -252,12 +271,40 @@ async fn matter_command(command: MatterCommands) -> Result<()> {
     Ok(())
 }
 
-fn chip_tool_from_args(args: ChipToolArgs) -> ChipTool {
-    let chip = ChipTool::new(args.chip_tool);
-    match args.commissioner_name {
-        Some(name) => chip.with_commissioner_name(name),
-        None => chip,
+fn chip_tool_from_args(args: ChipToolArgs) -> Result<ChipTool> {
+    let storage_directory = match args.storage_directory {
+        Some(path) => path,
+        None => matter_storage_directory()?,
+    };
+
+    fs::create_dir_all(&storage_directory).with_context(|| {
+        format!(
+            "failed to create Matter state directory {}",
+            storage_directory.display()
+        )
+    })?;
+
+    let mut chip = ChipTool::new(args.chip_tool).with_storage_directory(storage_directory);
+    if let Some(name) = args.commissioner_name {
+        chip = chip.with_commissioner_name(name);
     }
+
+    Ok(chip)
+}
+
+fn matter_storage_directory() -> Result<PathBuf> {
+    let state_root = match env::var_os("XDG_STATE_HOME") {
+        Some(path) => PathBuf::from(path),
+        None => {
+            let home = env::var_os("HOME").context("HOME is not set")?;
+            PathBuf::from(home).join(".local").join("state")
+        }
+    };
+
+    Ok(state_root
+        .join("phosyncra")
+        .join("matter")
+        .join("chip-tool"))
 }
 
 async fn spotify_login() -> Result<()> {
