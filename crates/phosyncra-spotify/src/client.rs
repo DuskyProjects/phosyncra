@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 
 const PLAYER_URL: &str = "https://api.spotify.com/v1/me/player";
 const DEVICES_URL: &str = "https://api.spotify.com/v1/me/player/devices";
+const TRACK_URL_PREFIX: &str = "https://api.spotify.com/v1/tracks/";
 const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
 
 pub struct SpotifyClient {
@@ -148,6 +149,58 @@ impl SpotifyClient {
             .context("Spotify returned an invalid devices response")?;
 
         Ok(devices.devices)
+    }
+
+    pub async fn track_isrc(&mut self, spotify_id: &str) -> Result<Option<String>> {
+        #[derive(Debug, Deserialize)]
+        struct TrackResponse {
+            #[serde(default)]
+            external_ids: std::collections::HashMap<String, String>,
+        }
+
+        self.ensure_fresh_token().await?;
+        let url = format!("{TRACK_URL_PREFIX}{spotify_id}");
+
+        let mut response = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.token.access_token)
+            .send()
+            .await
+            .context("failed to query Spotify track metadata")?;
+
+        if response.status() == StatusCode::UNAUTHORIZED {
+            self.refresh().await?;
+            response = self
+                .http
+                .get(&url)
+                .bearer_auth(&self.token.access_token)
+                .send()
+                .await
+                .context("failed to retry Spotify track metadata query")?;
+        }
+
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("unknown");
+            bail!("Spotify rate limit reached; retry after {retry_after} seconds");
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            bail!("Spotify track request failed with {status}: {body}");
+        }
+
+        let track: TrackResponse = response
+            .json()
+            .await
+            .context("Spotify returned an invalid track response")?;
+
+        Ok(track.external_ids.get("isrc").cloned())
     }
 
     pub async fn ensure_fresh_token(&mut self) -> Result<()> {
