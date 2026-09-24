@@ -397,13 +397,49 @@ async fn build_virtual_sync_track(
     snapshot: &PlaybackSnapshot,
 ) -> Result<Option<VirtualSyncTrack>> {
     let resolved = resolve_recording_from_snapshot(spotify, snapshot).await?;
-    let Some(analysis) = cache.load(&resolved.identity)? else {
-        println!(
-            "Sync: no cached analysis for {} — {}",
-            resolved.identity.artist, resolved.identity.title
-        );
-        println!("Run: phosyncra analysis fetch");
-        return Ok(None);
+    let analysis = match cache.load(&resolved.identity)? {
+        Some(analysis) => analysis,
+        None => {
+            println!(
+                "Sync: no cached analysis for {} — {}",
+                resolved.identity.artist, resolved.identity.title
+            );
+
+            let Some(recording_id) = resolved.identity.musicbrainz_recording_id.as_deref() else {
+                println!(
+                    "Sync: automatic analysis unavailable because no MusicBrainz recording ID was resolved"
+                );
+                println!(
+                    "Manual command: cargo run -p phosyncra-cli -- analysis fetch"
+                );
+                return Ok(None);
+            };
+
+            println!("Sync: fetching beat data from AcousticBrainz ({recording_id}) ...");
+            let provider = AcousticBrainzClient::new()?;
+
+            match provider.fetch(resolved.identity.clone()).await? {
+                Some(result) => {
+                    let beat_count = result.document.beats.len();
+                    let path = cache.save(&result.document)?;
+                    println!("Sync: fetched and cached {beat_count} beat timestamps");
+                    if let Some(bpm) = result.bpm {
+                        println!("Sync: AcousticBrainz BPM {bpm:.3}");
+                    }
+                    println!("Sync: cache file {}", path.display());
+                    result.document
+                }
+                None => {
+                    println!(
+                        "Sync: AcousticBrainz has no usable beat data for this recording"
+                    );
+                    println!(
+                        "Manual command: cargo run -p phosyncra-cli -- analysis fetch"
+                    );
+                    return Ok(None);
+                }
+            }
+        }
     };
 
     let timeline = analysis.timeline();
