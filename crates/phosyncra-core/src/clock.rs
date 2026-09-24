@@ -112,10 +112,7 @@ mod tests {
     fn resync_reports_provider_drift() {
         let t0 = Instant::now();
         let mut clock = PlaybackClock::from_snapshot(&snapshot(1_000, true), t0);
-        let correction = clock.resync(
-            &snapshot(1_300, true),
-            t0 + Duration::from_millis(250),
-        );
+        let correction = clock.resync(&snapshot(1_300, true), t0 + Duration::from_millis(250));
 
         assert_eq!(correction.predicted_position, Duration::from_millis(1_250));
         assert_eq!(correction.drift_ms, 50);
