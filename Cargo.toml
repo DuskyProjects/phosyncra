@@ -5,6 +5,7 @@ members = [
     "crates/phosyncra-daemon",
     "crates/phosyncra-spotify",
     "crates/phosyncra-cli",
+    "crates/phosyncra-analysis",
 ]
 
 [workspace.package]
