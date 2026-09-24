@@ -61,11 +61,7 @@ impl MusicBrainzClient {
         let response = self
             .http
             .get(RECORDING_SEARCH_URL)
-            .query(&[
-                ("query", query.as_str()),
-                ("fmt", "json"),
-                ("limit", "5"),
-            ])
+            .query(&[("query", query.as_str()), ("fmt", "json"), ("limit", "5")])
             .send()
             .await
             .context("failed to query MusicBrainz")?;
@@ -224,6 +220,9 @@ mod tests {
 
     #[test]
     fn query_quotes_special_text() {
-        assert_eq!(quote_query(r#"A "Quoted" Track"#), r#""A \"Quoted\" Track""#);
+        assert_eq!(
+            quote_query(r#"A "Quoted" Track"#),
+            r#""A \"Quoted\" Track""#
+        );
     }
 }
