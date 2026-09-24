@@ -166,10 +166,9 @@ fn select_match(
 }
 
 fn quote_query(value: &str) -> String {
-    let escaped = value.replace('\', "\\").replace('"', "\"");
-    format!(""{escaped}"")
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
-
 fn normalize_text(value: &str) -> String {
     value
         .chars()
