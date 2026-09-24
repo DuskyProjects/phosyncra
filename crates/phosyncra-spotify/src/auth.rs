@@ -1,7 +1,7 @@
 use crate::storage::TokenSet;
-use anyhow::{anyhow, bail, Context, Result};
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use rand::{rngs::OsRng, RngCore};
+use anyhow::{Context, Result, anyhow, bail};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::{RngCore, rngs::OsRng};
 use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::time::{SystemTime, UNIX_EPOCH};
