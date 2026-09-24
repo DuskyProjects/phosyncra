@@ -182,8 +182,7 @@ fn select_isrc_match(
     candidates: Vec<SearchRecording>,
 ) -> Option<MusicBrainzMatch> {
     let candidate = candidates.into_iter().min_by_key(|candidate| {
-        let title_mismatch =
-            normalize_text(&candidate.title) != normalize_text(&requested.title);
+        let title_mismatch = normalize_text(&candidate.title) != normalize_text(&requested.title);
         let duration_diff = candidate
             .length
             .map(|length| length.abs_diff(requested.duration_ms))
@@ -269,12 +268,7 @@ mod tests {
         }
     }
 
-    fn candidate(
-        id: &str,
-        score: u16,
-        title: &str,
-        length: Option<u64>,
-    ) -> SearchRecording {
+    fn candidate(id: &str, score: u16, title: &str, length: Option<u64>) -> SearchRecording {
         SearchRecording {
             id: id.into(),
             score,
