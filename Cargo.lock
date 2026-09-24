@@ -690,6 +690,7 @@ dependencies = [
  "phosyncra-acousticbrainz",
  "phosyncra-analysis",
  "phosyncra-core",
+ "phosyncra-matter",
  "phosyncra-musicbrainz",
  "phosyncra-spotify",
  "reqwest",
@@ -714,6 +715,15 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "phosyncra-matter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "phosyncra-core",
+ "tokio",
 ]
 
 [[package]]
