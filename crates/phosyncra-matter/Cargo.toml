@@ -1,0 +1,10 @@
+[package]
+name = "phosyncra-matter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+phosyncra-core = { path = "../phosyncra-core" }
+tokio.workspace = true
