@@ -63,8 +63,7 @@ impl ChipToolOutput {
     }
 
     pub fn is_timeout(&self) -> bool {
-        self.combined()
-            .contains("CHIP Error 0x00000032: Timeout")
+        self.combined().contains("CHIP Error 0x00000032: Timeout")
     }
 }
 
@@ -246,9 +245,7 @@ impl ChipTool {
         }
 
         if let Some(storage_directory) = &self.storage_directory {
-            command
-                .arg("--storage-directory")
-                .arg(storage_directory);
+            command.arg("--storage-directory").arg(storage_directory);
         }
 
         let output = command.output().await.with_context(|| {
