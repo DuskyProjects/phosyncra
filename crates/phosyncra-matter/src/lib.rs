@@ -42,6 +42,7 @@ impl FromStr for MatterTarget {
 pub struct ChipTool {
     binary: PathBuf,
     commissioner_name: Option<String>,
+    storage_directory: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +60,11 @@ impl ChipToolOutput {
             (true, false) => self.stderr.trim().to_string(),
             (true, true) => String::new(),
         }
+    }
+
+    pub fn is_timeout(&self) -> bool {
+        self.combined()
+            .contains("CHIP Error 0x00000032: Timeout")
     }
 }
 
@@ -92,6 +98,7 @@ impl ChipTool {
         Self {
             binary: binary.into(),
             commissioner_name: None,
+            storage_directory: None,
         }
     }
 
@@ -100,8 +107,17 @@ impl ChipTool {
         self
     }
 
+    pub fn with_storage_directory(mut self, storage_directory: impl Into<PathBuf>) -> Self {
+        self.storage_directory = Some(storage_directory.into());
+        self
+    }
+
     pub fn binary(&self) -> &PathBuf {
         &self.binary
+    }
+
+    pub fn storage_directory(&self) -> Option<&PathBuf> {
+        self.storage_directory.as_ref()
     }
 
     /// Checks that chip-tool can be spawned. A non-zero exit status is accepted
@@ -111,7 +127,12 @@ impl ChipTool {
     }
 
     pub async fn discover_commissionables(&self) -> Result<ChipToolOutput> {
-        self.run_checked(&["discover", "commissionables"]).await
+        let output = self.run_raw(&["discover", "commissionables"]).await?;
+        if output.status == 0 || output.is_timeout() {
+            return Ok(output);
+        }
+
+        checked_output(output)
     }
 
     pub async fn commission_code(&self, node_id: &str, setup_code: &str) -> Result<ChipToolOutput> {
@@ -213,17 +234,7 @@ impl ChipTool {
     }
 
     async fn run_checked(&self, args: &[&str]) -> Result<ChipToolOutput> {
-        let output = self.run_raw(args).await?;
-
-        if output.status != 0 {
-            let detail = output.combined();
-            if detail.is_empty() {
-                bail!("chip-tool exited with status {}", output.status);
-            }
-            bail!("chip-tool exited with status {}: {detail}", output.status);
-        }
-
-        Ok(output)
+        checked_output(self.run_raw(args).await?)
     }
 
     async fn run_raw(&self, args: &[&str]) -> Result<ChipToolOutput> {
@@ -232,6 +243,12 @@ impl ChipTool {
 
         if let Some(commissioner_name) = &self.commissioner_name {
             command.arg("--commissioner-name").arg(commissioner_name);
+        }
+
+        if let Some(storage_directory) = &self.storage_directory {
+            command
+                .arg("--storage-directory")
+                .arg(storage_directory);
         }
 
         let output = command.output().await.with_context(|| {
@@ -247,6 +264,18 @@ impl ChipTool {
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         })
     }
+}
+
+fn checked_output(output: ChipToolOutput) -> Result<ChipToolOutput> {
+    if output.status != 0 {
+        let detail = output.combined();
+        if detail.is_empty() {
+            bail!("chip-tool exited with status {}", output.status);
+        }
+        bail!("chip-tool exited with status {}: {detail}", output.status);
+    }
+
+    Ok(output)
 }
 
 fn validate_node_id(node_id: &str) -> Result<()> {
@@ -313,6 +342,17 @@ mod tests {
     fn rejects_invalid_target() {
         assert!("abc:1".parse::<MatterTarget>().is_err());
         assert!("1234".parse::<MatterTarget>().is_err());
+    }
+
+    #[test]
+    fn recognizes_chip_tool_timeout() {
+        let output = ChipToolOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: "CHIP Error 0x00000032: Timeout".into(),
+        };
+
+        assert!(output.is_timeout());
     }
 
     #[test]
