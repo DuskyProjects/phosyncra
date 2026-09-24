@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(query.get("redirect_uri").unwrap(), REDIRECT_URI);
         assert_eq!(query.get("code_challenge_method").unwrap(), "S256");
         assert_eq!(query.get("scope").unwrap(), SCOPE);
-        assert!(query.get("code_challenge").is_some());
-        assert!(query.get("state").is_some());
+        assert!(query.contains_key("code_challenge"));
+        assert!(query.contains_key("state"));
     }
 }
