@@ -1,9 +1,9 @@
 use crate::{
     models::{PlaybackResponse, SpotifyPlayback},
     save_token,
-    storage::{load_token, TokenSet},
+    storage::{TokenSet, load_token},
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use phosyncra_core::{PlaybackProvider, PlaybackSnapshot, ProviderError};
 use reqwest::{Client, StatusCode};
