@@ -1,8 +1,9 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use phosyncra_acousticbrainz::AcousticBrainzClient;
 use phosyncra_analysis::{AnalysisCache, RecordingIdentity};
 use phosyncra_core::{PlaybackSnapshot, PlaybackTracker};
-use phosyncra_musicbrainz::MusicBrainzClient;
+use phosyncra_musicbrainz::{MusicBrainzClient, MusicBrainzMatch};
 use phosyncra_spotify::{
     CLIENT_ID_ENV, CallbackServer, PkceFlow, SpotifyClient, SpotifyDevice, clear_token, load_token,
     save_token, token_path,
@@ -41,6 +42,8 @@ enum Commands {
 enum AnalysisCommands {
     /// Show the analysis-cache identity and cache status for the current Spotify track.
     Current,
+    /// Fetch beat timestamps for the current track from available external providers.
+    Fetch,
 }
 
 #[derive(Subcommand)]
@@ -77,6 +80,7 @@ async fn main() -> Result<()> {
         },
         Commands::Analysis { command } => match command {
             AnalysisCommands::Current => analysis_current().await,
+            AnalysisCommands::Fetch => analysis_fetch().await,
         },
     }
 }
@@ -170,13 +174,16 @@ async fn spotify_devices() -> Result<()> {
     Ok(())
 }
 
-async fn analysis_current() -> Result<()> {
-    let client_id = spotify_client_id()?;
-    let mut spotify = SpotifyClient::from_saved(client_id)?;
+struct ResolvedRecording {
+    identity: RecordingIdentity,
+    spotify_id: Option<String>,
+    musicbrainz_match: Option<MusicBrainzMatch>,
+}
+
+async fn resolve_current_recording(spotify: &mut SpotifyClient) -> Result<Option<ResolvedRecording>> {
     let playback = spotify.playback().await?;
     let Some(snapshot) = playback.snapshot else {
-        println!("Spotify: nothing playing");
-        return Ok(());
+        return Ok(None);
     };
 
     let mut identity = RecordingIdentity::from_track(&snapshot.track);
@@ -189,12 +196,8 @@ async fn analysis_current() -> Result<()> {
                     identity.set_isrc(isrc);
                     println!("Identity: ISRC enriched from Spotify full-track metadata");
                 }
-                Ok(None) => {
-                    println!("Identity: Spotify full-track metadata has no ISRC");
-                }
-                Err(error) => {
-                    eprintln!("Spotify metadata enrichment failed: {error:#}");
-                }
+                Ok(None) => println!("Identity: Spotify full-track metadata has no ISRC"),
+                Err(error) => eprintln!("Spotify metadata enrichment failed: {error:#}"),
             }
         }
     }
@@ -219,8 +222,15 @@ async fn analysis_current() -> Result<()> {
         Err(error) => eprintln!("Could not initialize MusicBrainz client: {error:#}"),
     }
 
-    let cache = AnalysisCache::from_xdg()?;
-    let path = cache.path_for(&identity);
+    Ok(Some(ResolvedRecording {
+        identity,
+        spotify_id,
+        musicbrainz_match,
+    }))
+}
+
+fn print_resolved_recording(resolved: &ResolvedRecording) {
+    let identity = &resolved.identity;
 
     println!("Recording: {} — {}", identity.artist, identity.title);
     println!("Duration: {} ms", identity.duration_ms);
@@ -229,7 +239,7 @@ async fn analysis_current() -> Result<()> {
         identity.isrc.as_deref().unwrap_or("<not available>")
     );
 
-    if let Some(spotify_id) = spotify_id {
+    if let Some(spotify_id) = &resolved.spotify_id {
         println!("Spotify ID: {spotify_id}");
     }
 
@@ -237,7 +247,7 @@ async fn analysis_current() -> Result<()> {
         println!("MusicBrainz recording ID: {recording_id}");
     }
 
-    if let Some(matched) = musicbrainz_match {
+    if let Some(matched) = &resolved.musicbrainz_match {
         println!(
             "MusicBrainz match: {} — {} | score={} | duration={} ms",
             matched.artist_credit,
@@ -249,11 +259,27 @@ async fn analysis_current() -> Result<()> {
                 .unwrap_or_else(|| "unknown".to_string())
         );
     }
+}
 
-    println!("Cache key: {}", AnalysisCache::cache_key(&identity));
+async fn analysis_current() -> Result<()> {
+    let client_id = spotify_client_id()?;
+    let mut spotify = SpotifyClient::from_saved(client_id)?;
+    let Some(resolved) = resolve_current_recording(&mut spotify).await? else {
+        println!("Spotify: nothing playing");
+        return Ok(());
+    };
+
+    let cache = AnalysisCache::from_xdg()?;
+    let path = cache.path_for(&resolved.identity);
+
+    print_resolved_recording(&resolved);
+    println!(
+        "Cache key: {}",
+        AnalysisCache::cache_key(&resolved.identity)
+    );
     println!("Cache file: {}", path.display());
 
-    match cache.load(&identity)? {
+    match cache.load(&resolved.identity)? {
         Some(analysis) => {
             println!(
                 "Analysis: cached ({} beats, {} sections)",
@@ -262,6 +288,57 @@ async fn analysis_current() -> Result<()> {
             );
         }
         None => println!("Analysis: cache miss"),
+    }
+
+    Ok(())
+}
+
+async fn analysis_fetch() -> Result<()> {
+    let client_id = spotify_client_id()?;
+    let mut spotify = SpotifyClient::from_saved(client_id)?;
+    let Some(resolved) = resolve_current_recording(&mut spotify).await? else {
+        println!("Spotify: nothing playing");
+        return Ok(());
+    };
+
+    let cache = AnalysisCache::from_xdg()?;
+    print_resolved_recording(&resolved);
+
+    if let Some(existing) = cache.load(&resolved.identity)? {
+        println!(
+            "Analysis already cached: {} beats, {} sections",
+            existing.beats.len(),
+            existing.sections.len()
+        );
+        println!("Cache file: {}", cache.path_for(&resolved.identity).display());
+        return Ok(());
+    }
+
+    let Some(recording_id) = resolved.identity.musicbrainz_recording_id.as_deref() else {
+        println!("Analysis: no MusicBrainz recording ID; AcousticBrainz lookup skipped");
+        return Ok(());
+    };
+
+    println!("Analysis provider: AcousticBrainz ({recording_id})");
+    let provider = AcousticBrainzClient::new()?;
+
+    match provider.fetch(resolved.identity.clone()).await? {
+        Some(result) => {
+            let beat_count = result.document.beats.len();
+            let path = cache.save(&result.document)?;
+            println!("Analysis fetched: {beat_count} beat timestamps");
+            if let Some(bpm) = result.bpm {
+                println!("AcousticBrainz BPM: {bpm:.3}");
+            }
+            println!("Downbeats: unavailable from this provider");
+            println!("Sections: unavailable from this provider");
+            println!("Cache file: {}", path.display());
+        }
+        None => {
+            println!(
+                "Analysis: AcousticBrainz has no usable low-level beat data for this recording"
+            );
+        }
     }
 
     Ok(())
