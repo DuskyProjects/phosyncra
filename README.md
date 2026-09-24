@@ -18,8 +18,46 @@ Phosyncra is being designed as a headless-first synchronization platform with an
 ## Workspace
 
 - `phosyncra-core` — shared domain types and synchronization primitives
-- `phosyncra-daemon` — headless service
+- `phosyncra-daemon` — headless synchronization service and simulator
+- `phosyncra-spotify` — Spotify PKCE authentication, token management, and playback provider
+- `phosyncra-cli` — the `phosyncra` command-line client
 - additional provider/backend/GUI crates will be added behind stable interfaces
+
+## Spotify setup
+
+Phosyncra uses Spotify Authorization Code with PKCE and does not require a client secret.
+
+Register this redirect URI in the Spotify Developer Dashboard:
+
+```text
+http://127.0.0.1:43821/callback
+```
+
+Set the client ID in your local environment. Fish users can persist it with:
+
+```fish
+set -Ux PHOSYNCRA_SPOTIFY_CLIENT_ID <client-id>
+```
+
+Then authorize:
+
+```sh
+cargo run -p phosyncra-cli -- spotify login
+```
+
+Inspect the current playback state:
+
+```sh
+cargo run -p phosyncra-cli -- spotify now-playing
+```
+
+Or watch playback changes:
+
+```sh
+cargo run -p phosyncra-cli -- spotify watch
+```
+
+OAuth tokens are stored under `$XDG_STATE_HOME/phosyncra/spotify-token.json`, or `~/.local/state/phosyncra/spotify-token.json` when `XDG_STATE_HOME` is unset. On Unix the directory is restricted to mode 0700 and the token file to mode 0600.
 
 ## Current timing prototype
 
@@ -60,4 +98,4 @@ GitHub Actions checks formatting, tests, and Clippy on every push and pull reque
 
 ## Status
 
-Early development. The first milestone is an end-to-end timing prototype: playback clock -> beat timeline -> scheduler -> lighting abstraction.
+Early development. The timing core is functional and Spotify playback integration is under active development.
