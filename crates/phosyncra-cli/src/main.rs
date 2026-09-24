@@ -1,14 +1,15 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use phosyncra_core::{PlaybackSnapshot, PlaybackTracker};
 use phosyncra_spotify::{
-    CLIENT_ID_ENV, CallbackServer, PkceFlow, SpotifyClient, clear_token, load_token, save_token,
-    token_path,
+    CLIENT_ID_ENV, CallbackServer, PkceFlow, SpotifyClient, SpotifyDevice, SpotifyPlayback,
+    clear_token, load_token, save_token, token_path,
 };
 use reqwest::Client;
 use std::{
     env,
     process::Command,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Parser)]
@@ -119,7 +120,7 @@ async fn spotify_now_playing() -> Result<()> {
     let client_id = spotify_client_id()?;
     let mut spotify = SpotifyClient::from_saved(client_id)?;
     let playback = spotify.playback().await?;
-    print_playback(&playback);
+    print_playback(playback.snapshot.as_ref(), playback.device.as_ref());
     Ok(())
 }
 
@@ -131,6 +132,7 @@ async fn spotify_watch(interval_ms: u64) -> Result<()> {
     let client_id = spotify_client_id()?;
     let mut spotify = SpotifyClient::from_saved(client_id)?;
     let mut interval = tokio::time::interval(Duration::from_millis(interval_ms));
+    let mut tracker: Option<PlaybackTracker> = None;
 
     println!("Watching Spotify playback. Press Ctrl+C to stop.");
 
@@ -139,7 +141,11 @@ async fn spotify_watch(interval_ms: u64) -> Result<()> {
             _ = tokio::signal::ctrl_c() => break,
             _ = interval.tick() => {
                 match spotify.playback().await {
-                    Ok(playback) => print_playback(&playback),
+                    Ok(playback) => {
+                        let now = Instant::now();
+                        let effective = update_tracker(&mut tracker, playback.snapshot.as_ref(), now);
+                        print_playback(effective.as_ref(), playback.device.as_ref());
+                    }
                     Err(error) => eprintln!("Spotify error: {error:#}"),
                 }
             }
@@ -147,6 +153,33 @@ async fn spotify_watch(interval_ms: u64) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn update_tracker(
+    tracker: &mut Option<PlaybackTracker>,
+    provider_snapshot: Option<&PlaybackSnapshot>,
+    now: Instant,
+) -> Option<PlaybackSnapshot> {
+    let snapshot = match provider_snapshot {
+        Some(snapshot) => snapshot,
+        None => {
+            *tracker = None;
+            return None;
+        }
+    };
+
+    match tracker {
+        Some(existing) => {
+            existing.ingest(snapshot, now);
+            Some(existing.snapshot_at(now))
+        }
+        None => {
+            let new_tracker = PlaybackTracker::new(snapshot, now);
+            let effective = new_tracker.snapshot_at(now);
+            *tracker = Some(new_tracker);
+            Some(effective)
+        }
+    }
 }
 
 fn spotify_logout() -> Result<()> {
@@ -158,8 +191,8 @@ fn spotify_logout() -> Result<()> {
     Ok(())
 }
 
-fn print_playback(playback: &phosyncra_spotify::SpotifyPlayback) {
-    let Some(snapshot) = &playback.snapshot else {
+fn print_playback(snapshot: Option<&PlaybackSnapshot>, device: Option<&SpotifyDevice>) {
+    let Some(snapshot) = snapshot else {
         println!("Spotify: nothing playing");
         return;
     };
@@ -179,7 +212,7 @@ fn print_playback(playback: &phosyncra_spotify::SpotifyPlayback) {
         println!("ISRC: {isrc}");
     }
 
-    if let Some(device) = &playback.device {
+    if let Some(device) = device {
         println!(
             "Device: {} ({}, active={})",
             device.name, device.device_type, device.is_active
