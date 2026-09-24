@@ -1,0 +1,16 @@
+[package]
+name = "phosyncra-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "phosyncra"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+phosyncra-spotify = { path = "../phosyncra-spotify" }
+reqwest.workspace = true
+tokio.workspace = true
