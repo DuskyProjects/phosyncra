@@ -1,8 +1,8 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use phosyncra_spotify::{
-    clear_token, load_token, save_token, token_path, CallbackServer, PkceFlow, SpotifyClient,
-    CLIENT_ID_ENV,
+    CLIENT_ID_ENV, CallbackServer, PkceFlow, SpotifyClient, clear_token, load_token, save_token,
+    token_path,
 };
 use reqwest::Client;
 use std::{
@@ -12,7 +12,11 @@ use std::{
 };
 
 #[derive(Parser)]
-#[command(name = "phosyncra", version, about = "Music-synchronized smart lighting for Linux")]
+#[command(
+    name = "phosyncra",
+    version,
+    about = "Music-synchronized smart lighting for Linux"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -75,7 +79,9 @@ async fn spotify_login() -> Result<()> {
             Err(error) => eprintln!("Could not open browser automatically: {error}"),
         }
     } else {
-        println!("No desktop session detected; open the URL above in a browser that can reach this machine's loopback callback.");
+        println!(
+            "No desktop session detected; open the URL above in a browser that can reach this machine's loopback callback."
+        );
     }
 
     println!("Waiting for Spotify callback on http://127.0.0.1:43821/callback ...");
@@ -158,14 +164,15 @@ fn print_playback(playback: &phosyncra_spotify::SpotifyPlayback) {
         return;
     };
 
-    let state = if snapshot.playing { "playing" } else { "paused" };
+    let state = if snapshot.playing {
+        "playing"
+    } else {
+        "paused"
+    };
     let position_ms = snapshot.position.as_millis();
     println!(
         "{state}: {} — {} | {} ms / {} ms",
-        snapshot.track.artist,
-        snapshot.track.title,
-        position_ms,
-        snapshot.track.duration_ms
+        snapshot.track.artist, snapshot.track.title, position_ms, snapshot.track.duration_ms
     );
 
     if let Some(isrc) = &snapshot.track.isrc {
