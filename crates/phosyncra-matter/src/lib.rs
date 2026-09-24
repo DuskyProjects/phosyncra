@@ -27,9 +27,9 @@ impl FromStr for MatterTarget {
     type Err = anyhow::Error;
 
     fn from_str(value: &str) -> Result<Self> {
-        let (node_id, endpoint) = value
-            .rsplit_once(':')
-            .ok_or_else(|| anyhow!("Matter target must be NODE_ID:ENDPOINT, for example 0x1234:1"))?;
+        let (node_id, endpoint) = value.rsplit_once(':').ok_or_else(|| {
+            anyhow!("Matter target must be NODE_ID:ENDPOINT, for example 0x1234:1")
+        })?;
         let endpoint = endpoint
             .parse::<u16>()
             .with_context(|| format!("invalid Matter endpoint {endpoint:?}"))?;
@@ -114,11 +114,7 @@ impl ChipTool {
         self.run_checked(&["discover", "commissionables"]).await
     }
 
-    pub async fn commission_code(
-        &self,
-        node_id: &str,
-        setup_code: &str,
-    ) -> Result<ChipToolOutput> {
+    pub async fn commission_code(&self, node_id: &str, setup_code: &str) -> Result<ChipToolOutput> {
         validate_node_id(node_id)?;
         if setup_code.trim().is_empty() {
             bail!("Matter setup code cannot be empty");
@@ -134,8 +130,13 @@ impl ChipTool {
     }
 
     pub async fn off(&self, target: &MatterTarget) -> Result<ChipToolOutput> {
-        self.run_checked(&["onoff", "off", &target.node_id, &target.endpoint.to_string()])
-            .await
+        self.run_checked(&[
+            "onoff",
+            "off",
+            &target.node_id,
+            &target.endpoint.to_string(),
+        ])
+        .await
     }
 
     pub async fn set_level(
@@ -254,7 +255,10 @@ fn validate_node_id(node_id: &str) -> Result<()> {
         bail!("Matter node ID cannot be empty");
     }
 
-    let valid = if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+    let valid = if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
         !hex.is_empty() && hex.chars().all(|c| c.is_ascii_hexdigit())
     } else {
         value.chars().all(|c| c.is_ascii_digit())
