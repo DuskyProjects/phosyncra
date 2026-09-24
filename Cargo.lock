@@ -679,6 +679,7 @@ dependencies = [
  "clap",
  "phosyncra-analysis",
  "phosyncra-core",
+ "phosyncra-musicbrainz",
  "phosyncra-spotify",
  "reqwest",
  "tokio",
@@ -702,6 +703,17 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "phosyncra-musicbrainz"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "phosyncra-analysis",
+ "reqwest",
+ "serde",
+ "tokio",
 ]
 
 [[package]]
