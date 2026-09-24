@@ -4,11 +4,13 @@ mod clock;
 mod effect;
 mod scheduler;
 mod timeline;
+mod tracker;
 
 pub use clock::{ClockCorrection, PlaybackClock};
 pub use effect::{Effect, PulseEffect};
 pub use scheduler::TimelineScheduler;
 pub use timeline::{BeatTimeline, TimelineError};
+pub use tracker::{PlaybackTracker, PlaybackUpdate};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
