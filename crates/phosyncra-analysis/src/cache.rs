@@ -2,8 +2,7 @@ use crate::{ANALYSIS_SCHEMA_VERSION, AnalysisDocument, RecordingIdentity};
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 use std::{
-    env,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
