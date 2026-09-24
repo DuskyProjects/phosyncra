@@ -214,7 +214,9 @@ async fn resolve_current_recording(
         return Ok(None);
     };
 
-    resolve_recording_from_snapshot(spotify, &snapshot).await.map(Some)
+    resolve_recording_from_snapshot(spotify, &snapshot)
+        .await
+        .map(Some)
 }
 
 async fn resolve_recording_from_snapshot(
