@@ -174,7 +174,10 @@ impl std::fmt::Display for ValidationError {
                 write!(f, "section starts at {start_ms} ms but ends at {end_ms} ms")
             }
             Self::SectionPastDuration(end_ms) => {
-                write!(f, "section ending at {end_ms} ms is past recording duration")
+                write!(
+                    f,
+                    "section ending at {end_ms} ms is past recording duration"
+                )
             }
         }
     }
@@ -210,7 +213,10 @@ mod tests {
 
         let recording = RecordingIdentity::from_track(&track);
         assert_eq!(recording.isrc.as_deref(), Some("USABC1234567"));
-        assert_eq!(recording.provider_ids.get("spotify").map(String::as_str), Some("abc123"));
+        assert_eq!(
+            recording.provider_ids.get("spotify").map(String::as_str),
+            Some("abc123")
+        );
     }
 
     #[test]
