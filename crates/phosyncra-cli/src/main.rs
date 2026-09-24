@@ -180,7 +180,9 @@ struct ResolvedRecording {
     musicbrainz_match: Option<MusicBrainzMatch>,
 }
 
-async fn resolve_current_recording(spotify: &mut SpotifyClient) -> Result<Option<ResolvedRecording>> {
+async fn resolve_current_recording(
+    spotify: &mut SpotifyClient,
+) -> Result<Option<ResolvedRecording>> {
     let playback = spotify.playback().await?;
     let Some(snapshot) = playback.snapshot else {
         return Ok(None);
@@ -310,7 +312,10 @@ async fn analysis_fetch() -> Result<()> {
             existing.beats.len(),
             existing.sections.len()
         );
-        println!("Cache file: {}", cache.path_for(&resolved.identity).display());
+        println!(
+            "Cache file: {}",
+            cache.path_for(&resolved.identity).display()
+        );
         return Ok(());
     }
 
