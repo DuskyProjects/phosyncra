@@ -176,10 +176,8 @@ mod tests {
     #[test]
     fn release_later_than_tolerance_is_dropped() {
         let timeline = BeatTimeline::from_bpm(Duration::from_secs(2), 120.0).unwrap();
-        let mut scheduler = TimelineScheduler::with_tolerances(
-            Duration::from_secs(2),
-            Duration::from_millis(25),
-        );
+        let mut scheduler =
+            TimelineScheduler::with_tolerances(Duration::from_secs(2), Duration::from_millis(25));
 
         scheduler.due_events(&timeline, Duration::ZERO, Duration::ZERO);
 
