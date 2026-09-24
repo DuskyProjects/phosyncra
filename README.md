@@ -1,8 +1,10 @@
-# Phosyncra
+# Phosyncra 
 
 Linux-native music-synchronized smart lighting.
 
 Phosyncra is being designed as a headless-first synchronization platform with an optional desktop GUI. Playback providers, musical analysis, effects, and lighting backends are kept separate so the project can support multiple music services and smart-home ecosystems.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S8Q127LMG6)
 
 ## Initial goals
 
