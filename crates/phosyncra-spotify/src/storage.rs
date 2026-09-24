@@ -68,8 +68,12 @@ pub fn save_token(token: &TokenSet) -> Result<()> {
 
 pub fn load_token() -> Result<TokenSet> {
     let path = token_path()?;
-    let data = fs::read(&path)
-        .with_context(|| format!("Spotify is not logged in; token not found at {}", path.display()))?;
+    let data = fs::read(&path).with_context(|| {
+        format!(
+            "Spotify is not logged in; token not found at {}",
+            path.display()
+        )
+    })?;
     serde_json::from_slice(&data).context("saved Spotify token is invalid")
 }
 
@@ -78,7 +82,6 @@ pub fn clear_token() -> Result<bool> {
     if !path.exists() {
         return Ok(false);
     }
-    fs::remove_file(&path)
-        .with_context(|| format!("failed to remove {}", path.display()))?;
+    fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
     Ok(true)
 }
