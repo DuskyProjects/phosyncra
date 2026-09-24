@@ -409,9 +409,7 @@ async fn build_virtual_sync_track(
                 println!(
                     "Sync: automatic analysis unavailable because no MusicBrainz recording ID was resolved"
                 );
-                println!(
-                    "Manual command: cargo run -p phosyncra-cli -- analysis fetch"
-                );
+                println!("Manual command: cargo run -p phosyncra-cli -- analysis fetch");
                 return Ok(None);
             };
 
@@ -430,12 +428,8 @@ async fn build_virtual_sync_track(
                     result.document
                 }
                 None => {
-                    println!(
-                        "Sync: AcousticBrainz has no usable beat data for this recording"
-                    );
-                    println!(
-                        "Manual command: cargo run -p phosyncra-cli -- analysis fetch"
-                    );
+                    println!("Sync: AcousticBrainz has no usable beat data for this recording");
+                    println!("Manual command: cargo run -p phosyncra-cli -- analysis fetch");
                     return Ok(None);
                 }
             }
