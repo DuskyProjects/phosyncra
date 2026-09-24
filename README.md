@@ -87,6 +87,8 @@ Discover commissionable Matter devices:
 cargo run -p phosyncra-cli -- matter discover
 ```
 
+CHIP Tool controller state is persisted under `$XDG_STATE_HOME/phosyncra/matter/chip-tool/`, or `~/.local/state/phosyncra/matter/chip-tool/` when `XDG_STATE_HOME` is unset. A discovery timeout with no discovered device is reported as an empty result rather than a fatal Phosyncra error.
+
 Commission a device using a QR/manual setup payload:
 
 ```sh
