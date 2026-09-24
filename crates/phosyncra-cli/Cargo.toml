@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+phosyncra-analysis = { path = "../phosyncra-analysis" }
 phosyncra-core = { path = "../phosyncra-core" }
 phosyncra-spotify = { path = "../phosyncra-spotify" }
 reqwest.workspace = true

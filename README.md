@@ -21,6 +21,7 @@ Phosyncra is being designed as a headless-first synchronization platform with an
 - `phosyncra-daemon` — headless synchronization service and simulator
 - `phosyncra-spotify` — Spotify PKCE authentication, token management, and playback provider
 - `phosyncra-cli` — the `phosyncra` command-line client
+- `phosyncra-analysis` — normalized beat/section documents and persistent analysis cache
 - additional provider/backend/GUI crates will be added behind stable interfaces
 
 ## Spotify setup
@@ -56,6 +57,14 @@ Or watch playback changes:
 ```sh
 cargo run -p phosyncra-cli -- spotify watch
 ```
+
+Inspect the analysis-cache identity for the current Spotify recording:
+
+```sh
+cargo run -p phosyncra-cli -- analysis current
+```
+
+Analysis documents are stored under `$XDG_CACHE_HOME/phosyncra/analysis/`, or `~/.cache/phosyncra/analysis/` when `XDG_CACHE_HOME` is unset. Cache keys prefer ISRC, then MusicBrainz recording ID, then Spotify ID, with metadata as a final fallback.
 
 OAuth tokens are stored under `$XDG_STATE_HOME/phosyncra/spotify-token.json`, or `~/.local/state/phosyncra/spotify-token.json` when `XDG_STATE_HOME` is unset. On Unix the directory is restricted to mode 0700 and the token file to mode 0600.
 
